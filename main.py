@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 import torchvision
 from torchvision import transforms
+from transformers import BertTokenizer
+
 
 
 def set_seed(seed):
@@ -68,6 +70,7 @@ class VQADataset(torch.utils.data.Dataset):
         self.image_dir = image_dir  # 画像ファイルのディレクトリ
         self.df = pandas.read_json(df_path)  # 画像ファイルのパス，question, answerを持つDataFrame
         self.answer = answer
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
         # question / answerの辞書を作成
         self.question2idx = {}
@@ -128,16 +131,18 @@ class VQADataset(torch.utils.data.Dataset):
         mode_answer_idx : torch.Tensor  (1)
             10人の回答者の回答の中で最頻値の回答のid
         """
+        # one-hot表現ではなく、tokenizerを使用したい
+        text = self.df["question"][idx]
+        question = self.tokenizer(text, 
+                                  padding='max_length', 
+                                  max_length=20, 
+                                  truncation=True, 
+                                  return_tensors='pt')['input_ids']
+        question = question.squeeze(0)  # バッチ次元を削除
+    
         image = Image.open(f"{self.image_dir}/{self.df['image'][idx]}")
         image = self.transform(image)
-        question = np.zeros(len(self.idx2question) + 1)  # 未知語用の要素を追加
-        question_words = self.df["question"][idx].split(" ")
-        for word in question_words:
-            try:
-                question[self.question2idx[word]] = 1  # one-hot表現に変換
-            except KeyError:
-                question[-1] = 1  # 未知語
-
+    
         if self.answer:
             answers = [self.answer2idx[process_text(answer["answer"])] for answer in self.df["answers"][idx]]
             mode_answer_idx = mode(answers)  # 最頻値を取得（正解ラベル）
@@ -171,7 +176,7 @@ def VQA_criterion(batch_pred: torch.Tensor, batch_answers: torch.Tensor):
     return total_acc / len(batch_pred)
 
 
-# 3. モデルのの実装
+# 3. モデルのの実装 後でVitかなんかに変更
 # ResNetを利用できるようにしておく
 class BasicBlock(nn.Module):
     expansion = 1
@@ -365,7 +370,7 @@ def main():
 
     # dataloader / model
     transform = transforms.Compose([
-        transforms.Resize((224, 224)),
+        transforms.Resize((224, 224)), #後で変更 Vitと合わせる？
         transforms.ToTensor()
     ])
     train_dataset = VQADataset(df_path="./data/train.json", image_dir="./data/train", transform=transform)
